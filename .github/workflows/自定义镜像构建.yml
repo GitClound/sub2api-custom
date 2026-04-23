@@ -3,12 +3,12 @@ name: 自定义镜像构建
 on:
   workflow_dispatch:
     inputs:
-      镜像标签:
+      image_tag:
         description: 自定义镜像标签，例如 claw-fix
         required: true
         default: claw-fix
         type: string
-      同步latest:
+      sync_latest:
         description: 是否同时推送 latest 标签
         required: true
         default: true
@@ -45,14 +45,14 @@ jobs:
           OWNER_LOWER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           REPO_LOWER="$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')"
           IMAGE="ghcr.io/${OWNER_LOWER}/${REPO_LOWER}"
-          TAG_INPUT="${{ github.event.inputs.镜像标签 }}"
+          TAG_INPUT="${{ github.event.inputs.image_tag }}"
 
           {
             echo "image=${IMAGE}"
             echo "primary_tag=${IMAGE}:${TAG_INPUT}"
           } >> "${GITHUB_OUTPUT}"
 
-          if [ "${{ github.event.inputs.同步latest }}" = "true" ]; then
+          if [ "${{ github.event.inputs.sync_latest }}" = "true" ]; then
             {
               echo 'tags<<EOF'
               echo "${IMAGE}:${TAG_INPUT}"
@@ -82,6 +82,6 @@ jobs:
         shell: bash
         run: |
           echo "已推送镜像：${{ steps.meta.outputs.primary_tag }}"
-          if [ "${{ github.event.inputs.同步latest }}" = "true" ]; then
+          if [ "${{ github.event.inputs.sync_latest }}" = "true" ]; then
             echo "附加标签：${{ steps.meta.outputs.image }}:latest"
           fi
