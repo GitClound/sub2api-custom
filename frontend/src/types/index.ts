@@ -963,6 +963,18 @@ export interface AdminDataImportResult {
   errors?: AdminDataImportError[]
 }
 
+export interface CLIProxyAuthFile {
+  name: string
+  data: Record<string, unknown>
+}
+
+export interface CLIProxyAuthExportPayload {
+  type: 'cliproxy-auth-bundle'
+  version: number
+  exported_at: string
+  files: CLIProxyAuthFile[]
+}
+
 // ==================== Usage & Redeem Types ====================
 
 export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation'

@@ -2199,3 +2199,107 @@ func TestGetChannelModelPricing_NonAntigravityUnaffected(t *testing.T) {
 	require.Equal(t, int64(601), result.ID)
 	require.InDelta(t, 5e-6, *result.InputPrice, 1e-12)
 }
+
+type availableGroupRepoStub struct {
+	groupRepoNoop
+	groups []Group
+	err    error
+}
+
+func (s availableGroupRepoStub) ListActive(context.Context) ([]Group, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.groups, nil
+}
+
+func TestChannelSupportedModels_IncludesMappedAndPricingOnlyModels(t *testing.T) {
+	channel := &Channel{
+		ModelMapping: map[string]map[string]string{
+			PlatformAnthropic: {
+				"claude-sonnet": "claude-sonnet-4-20250514",
+			},
+		},
+		ModelPricing: []ChannelModelPricing{
+			{
+				Platform:    PlatformAnthropic,
+				Models:      []string{"claude-sonnet-4-20250514"},
+				InputPrice:  testPtrFloat64(3e-6),
+				OutputPrice: testPtrFloat64(15e-6),
+			},
+			{
+				Platform:   PlatformOpenAI,
+				Models:     []string{"gpt-4.1"},
+				InputPrice: testPtrFloat64(2e-6),
+			},
+		},
+	}
+
+	models := channel.SupportedModels()
+	require.Len(t, models, 3)
+	require.Equal(t, "claude-sonnet", models[0].Name)
+	require.Equal(t, PlatformAnthropic, models[0].Platform)
+	require.NotNil(t, models[0].Pricing)
+	require.Equal(t, "claude-sonnet-4-20250514", models[1].Name)
+	require.Equal(t, PlatformAnthropic, models[1].Platform)
+	require.NotNil(t, models[1].Pricing)
+	require.Equal(t, "gpt-4.1", models[2].Name)
+	require.Equal(t, PlatformOpenAI, models[2].Platform)
+	require.NotNil(t, models[2].Pricing)
+}
+
+func TestListAvailable_FillsFallbackPricingAndOmitsInactiveGroups(t *testing.T) {
+	repo := &mockChannelRepository{
+		listAllFn: func(context.Context) ([]Channel, error) {
+			return []Channel{
+				{
+					ID:          1,
+					Name:        "Primary Channel",
+					Description: "Main route",
+					Status:      StatusActive,
+					GroupIDs:    []int64{1, 99},
+					ModelMapping: map[string]map[string]string{
+						PlatformOpenAI: {
+							"gpt-4.1": "",
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	svc := newTestChannelService(repo)
+	svc.groupRepo = availableGroupRepoStub{
+		groups: []Group{
+			{
+				ID:               1,
+				Name:             "OpenAI Standard",
+				Platform:         PlatformOpenAI,
+				RateMultiplier:   1.5,
+				IsExclusive:      false,
+				SubscriptionType: SubscriptionTypeStandard,
+			},
+		},
+	}
+	svc.pricingService = &PricingService{
+		pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-4.1": {
+				InputCostPerToken:  2.5e-6,
+				OutputCostPerToken: 10e-6,
+			},
+		},
+	}
+
+	channels, err := svc.ListAvailable(context.Background())
+	require.NoError(t, err)
+	require.Len(t, channels, 1)
+	require.Equal(t, BillingModelSourceChannelMapped, channels[0].BillingModelSource)
+	require.Len(t, channels[0].Groups, 1)
+	require.Equal(t, int64(1), channels[0].Groups[0].ID)
+	require.Len(t, channels[0].SupportedModels, 1)
+	require.Equal(t, "gpt-4.1", channels[0].SupportedModels[0].Name)
+	require.NotNil(t, channels[0].SupportedModels[0].Pricing)
+	require.Equal(t, BillingModeToken, channels[0].SupportedModels[0].Pricing.BillingMode)
+	require.NotNil(t, channels[0].SupportedModels[0].Pricing.InputPrice)
+	require.InDelta(t, 2.5e-6, *channels[0].SupportedModels[0].Pricing.InputPrice, 1e-12)
+}

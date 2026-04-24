@@ -69,6 +69,8 @@ func setupAccountDataRouter() (*gin.Engine, *stubAdminService) {
 
 	router.GET("/api/v1/admin/accounts/data", h.ExportData)
 	router.POST("/api/v1/admin/accounts/data", h.ImportData)
+	router.GET("/api/v1/admin/accounts/cliproxy-auths", h.ExportCLIProxyAuthFiles)
+	router.POST("/api/v1/admin/accounts/cliproxy-auths", h.ImportCLIProxyAuthFiles)
 	return router, adminSvc
 }
 
@@ -229,4 +231,79 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Len(t, adminSvc.createdProxies, 0)
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
+}
+
+func TestImportCLIProxyCodexAuthCreatesOpenAIOAuthAccount(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+
+	payload := map[string]any{
+		"files": []map[string]any{
+			{
+				"name": "codex-user.json",
+				"data": map[string]any{
+					"type":          "codex",
+					"access_token":  "access",
+					"refresh_token": "refresh",
+					"id_token":      "id",
+					"email":         "user@example.com",
+					"account_id":    "acct_123",
+					"expired":       "2026-04-24T12:00:00Z",
+				},
+			},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/cliproxy-auths", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.Len(t, adminSvc.createdAccounts, 1)
+	created := adminSvc.createdAccounts[0]
+	require.Equal(t, service.PlatformOpenAI, created.Platform)
+	require.Equal(t, service.AccountTypeOAuth, created.Type)
+	require.Equal(t, "user@example.com", created.Name)
+	require.Equal(t, "access", created.Credentials["access_token"])
+	require.Equal(t, "refresh", created.Credentials["refresh_token"])
+	require.Equal(t, "acct_123", created.Credentials["chatgpt_account_id"])
+	require.Equal(t, "2026-04-24T12:00:00Z", created.Credentials["expires_at"])
+	require.True(t, created.SkipDefaultGroupBind)
+}
+
+func TestExportCLIProxyAuthFilesReturnsCodexJSON(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.accounts = []service.Account{
+		{
+			ID:       1,
+			Name:     "user@example.com",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeOAuth,
+			Credentials: map[string]any{
+				"access_token":       "access",
+				"refresh_token":      "refresh",
+				"chatgpt_account_id": "acct_123",
+				"expires_at":         "2026-04-24T12:00:00Z",
+			},
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/cliproxy-auths", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			Type  string             `json:"type"`
+			Files []CLIProxyAuthFile `json:"files"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, cliProxyAuthBundleType, resp.Data.Type)
+	require.Len(t, resp.Data.Files, 1)
+	require.Equal(t, "codex", resp.Data.Files[0].Data["type"])
+	require.Equal(t, "acct_123", resp.Data.Files[0].Data["account_id"])
+	require.Equal(t, "2026-04-24T12:00:00Z", resp.Data.Files[0].Data["expired"])
 }

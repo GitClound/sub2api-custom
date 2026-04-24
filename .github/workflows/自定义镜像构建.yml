@@ -1,6 +1,9 @@
 name: 自定义镜像构建
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       image_tag:
@@ -47,13 +50,20 @@ jobs:
           REPO_LOWER="$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')"
           IMAGE="ghcr.io/${OWNER_LOWER}/${REPO_LOWER}"
           TAG_INPUT="${{ github.event.inputs.image_tag }}"
+          if [ -z "${TAG_INPUT}" ]; then
+            TAG_INPUT="main-${GITHUB_SHA::7}"
+          fi
 
           {
             echo "image=${IMAGE}"
             echo "primary_tag=${IMAGE}:${TAG_INPUT}"
           } >> "${GITHUB_OUTPUT}"
 
-          if [ "${{ github.event.inputs.sync_latest }}" = "true" ]; then
+          SYNC_LATEST="${{ github.event.inputs.sync_latest }}"
+          if [ -z "${SYNC_LATEST}" ]; then
+            SYNC_LATEST="true"
+          fi
+          if [ "${SYNC_LATEST}" = "true" ]; then
             {
               echo 'tags<<EOF'
               echo "${IMAGE}:${TAG_INPUT}"
@@ -83,6 +93,10 @@ jobs:
         shell: bash
         run: |
           echo "已推送镜像：${{ steps.meta.outputs.primary_tag }}"
-          if [ "${{ github.event.inputs.sync_latest }}" = "true" ]; then
+          SYNC_LATEST="${{ github.event.inputs.sync_latest }}"
+          if [ -z "${SYNC_LATEST}" ]; then
+            SYNC_LATEST="true"
+          fi
+          if [ "${SYNC_LATEST}" = "true" ]; then
             echo "附加标签：${{ steps.meta.outputs.image }}:latest"
           fi

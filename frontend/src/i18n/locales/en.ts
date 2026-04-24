@@ -330,6 +330,7 @@ export default {
     dashboard: 'Dashboard',
     announcements: 'Announcements',
     apiKeys: 'API Keys',
+    availableChannels: 'Available Channels',
     usage: 'Usage',
     redeem: 'Redeem',
     profile: 'Profile',
@@ -527,6 +528,41 @@ export default {
   // Groups (shared)
   groups: {
     subscription: 'Sub'
+  },
+
+  availableChannels: {
+    title: 'Available Channels',
+    description: 'Browse the channels, groups, and models available to your account',
+    searchPlaceholder: 'Search channels, platforms, groups, or models...',
+    empty: 'No available channels',
+    noPricing: 'Pricing not configured',
+    noModels: 'No models',
+    exclusive: 'Exclusive',
+    public: 'Public',
+    exclusiveTooltip: 'Exclusive groups available only to your account',
+    publicTooltip: 'Public groups visible to every authorized user',
+    columns: {
+      name: 'Channel',
+      description: 'Description',
+      platform: 'Platform',
+      groups: 'Groups',
+      supportedModels: 'Supported Models'
+    },
+    pricing: {
+      billingMode: 'Billing Mode',
+      billingModeToken: 'Per Token',
+      billingModePerRequest: 'Per Request',
+      billingModeImage: 'Per Image',
+      inputPrice: 'Input Price',
+      outputPrice: 'Output Price',
+      cacheWritePrice: 'Cache Write',
+      cacheReadPrice: 'Cache Read',
+      imageOutputPrice: 'Image Output',
+      perRequestPrice: 'Per Request Price',
+      intervals: 'Tier Pricing',
+      unitPerMillion: 'USD / 1M tokens',
+      unitPerRequest: 'USD / request'
+    }
   },
 
   // API Keys
@@ -1937,6 +1973,18 @@ export default {
       dataExportSelected: 'Export Selected',
       dataExportIncludeProxies: 'Include proxies linked to the exported accounts',
       dataImport: 'Import',
+      cliproxyAuth: 'CLIProxyAPI Auth',
+      cliproxyAuthTitle: 'Import / Export CLIProxyAPI Auth JSON',
+      cliproxyAuthHint: 'Upload JSON files generated in CLIProxyAPI auths/. Supported types: codex/openai, gemini, and antigravity. Export creates a bundle that CLIProxyAPI-compatible tools can inspect or re-import here.',
+      cliproxyAuthChooseFiles: 'Choose Auth JSON Files',
+      cliproxyAuthSelected: '{count} files selected',
+      cliproxyAuthSkipDefaultGroup: 'Do not bind imported accounts to the default group',
+      cliproxyAuthImport: 'Import CLIProxyAPI Auths',
+      cliproxyAuthExport: 'Export CLIProxyAPI Auths',
+      cliproxyAuthImportSuccess: 'Imported {count} CLIProxyAPI auth account(s)',
+      cliproxyAuthImportFailed: 'Failed to import CLIProxyAPI auth files',
+      cliproxyAuthExported: 'Exported {count} CLIProxyAPI auth file(s)',
+      cliproxyAuthExportFailed: 'Failed to export CLIProxyAPI auth files',
       dataExportConfirmMessage: 'The exported data contains sensitive account and proxy information. Store it securely.',
       dataExportConfirm: 'Confirm Export',
       dataExported: 'Data exported successfully',

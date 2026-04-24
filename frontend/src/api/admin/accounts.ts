@@ -16,6 +16,8 @@ import type {
   TempUnschedulableStatus,
   AdminDataPayload,
   AdminDataImportResult,
+  CLIProxyAuthExportPayload,
+  CLIProxyAuthFile,
   CheckMixedChannelRequest,
   CheckMixedChannelResponse
 } from '@/types'
@@ -532,6 +534,39 @@ export async function importData(payload: {
   return data
 }
 
+export async function exportCLIProxyAuths(options?: {
+  ids?: number[]
+  filters?: {
+    platform?: string
+    type?: string
+    status?: string
+    search?: string
+  }
+}): Promise<CLIProxyAuthExportPayload> {
+  const params: Record<string, string> = {}
+  if (options?.ids && options.ids.length > 0) {
+    params.ids = options.ids.join(',')
+  } else if (options?.filters) {
+    const { platform, type, status, search } = options.filters
+    if (platform) params.platform = platform
+    if (type) params.type = type
+    if (status) params.status = status
+    if (search) params.search = search
+  }
+  const { data } = await apiClient.get<CLIProxyAuthExportPayload>('/admin/accounts/cliproxy-auths', { params })
+  return data
+}
+
+export async function importCLIProxyAuths(payload: {
+  files: CLIProxyAuthFile[]
+  skip_default_group_bind?: boolean
+  concurrency?: number
+  priority?: number
+}): Promise<AdminDataImportResult> {
+  const { data } = await apiClient.post<AdminDataImportResult>('/admin/accounts/cliproxy-auths', payload)
+  return data
+}
+
 /**
  * Get Antigravity default model mapping from backend
  * @returns Default model mapping (from -> to)
@@ -648,6 +683,8 @@ export const accountsAPI = {
   syncFromCrs,
   exportData,
   importData,
+  exportCLIProxyAuths,
+  importCLIProxyAuths,
   getAntigravityDefaultModelMapping,
   batchClearError,
   batchRefresh,

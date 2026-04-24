@@ -27,6 +27,18 @@ func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient)
 	return svc, nil
 }
 
+func ProvideChannelService(
+	repo ChannelRepository,
+	authCacheInvalidator APIKeyAuthCacheInvalidator,
+	groupRepo GroupRepository,
+	pricingService *PricingService,
+) *ChannelService {
+	svc := NewChannelService(repo, authCacheInvalidator)
+	svc.groupRepo = groupRepo
+	svc.pricingService = pricingService
+	return svc
+}
+
 // ProvideUpdateService creates UpdateService with BuildInfo
 func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, buildInfo BuildInfo) *UpdateService {
 	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
@@ -458,6 +470,6 @@ var ProviderSet = wire.NewSet(
 	ProvideScheduledTestService,
 	ProvideScheduledTestRunnerService,
 	NewGroupCapacityService,
-	NewChannelService,
+	ProvideChannelService,
 	NewModelPricingResolver,
 )

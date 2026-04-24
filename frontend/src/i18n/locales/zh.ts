@@ -330,6 +330,7 @@ export default {
     dashboard: '仪表盘',
     announcements: '公告',
     apiKeys: 'API 密钥',
+    availableChannels: '可用渠道',
     usage: '使用记录',
     redeem: '兑换',
     profile: '个人资料',
@@ -527,6 +528,41 @@ export default {
   // Groups (shared)
   groups: {
     subscription: '订阅'
+  },
+
+  availableChannels: {
+    title: '可用渠道',
+    description: '查看当前账号可访问的渠道、分组和支持模型',
+    searchPlaceholder: '搜索渠道、平台、分组或模型...',
+    empty: '暂无可用渠道',
+    noPricing: '未配置定价',
+    noModels: '暂无模型',
+    exclusive: '专属',
+    public: '公开',
+    exclusiveTooltip: '仅你可用的专属分组',
+    publicTooltip: '所有授权用户都可见的公开分组',
+    columns: {
+      name: '渠道',
+      description: '描述',
+      platform: '平台',
+      groups: '分组',
+      supportedModels: '支持模型'
+    },
+    pricing: {
+      billingMode: '计费模式',
+      billingModeToken: '按 Token',
+      billingModePerRequest: '按次',
+      billingModeImage: '按图片',
+      inputPrice: '输入价格',
+      outputPrice: '输出价格',
+      cacheWritePrice: '缓存写入',
+      cacheReadPrice: '缓存读取',
+      imageOutputPrice: '图片输出',
+      perRequestPrice: '单次价格',
+      intervals: '分段价格',
+      unitPerMillion: 'USD / 百万 Tokens',
+      unitPerRequest: 'USD / 次'
+    }
   },
 
   // API Keys
@@ -2016,6 +2052,18 @@ export default {
       dataExportSelected: '导出选中',
       dataExportIncludeProxies: '导出代理（导出账号关联的代理）',
       dataImport: '导入',
+      cliproxyAuth: 'CLIProxyAPI Auth',
+      cliproxyAuthTitle: '导入 / 导出 CLIProxyAPI Auth JSON',
+      cliproxyAuthHint: '上传 CLIProxyAPI auths/ 目录生成的 JSON 文件。支持 codex/openai、gemini、antigravity。导出会生成可再次导入本系统的 CLIProxyAPI Auth 包。',
+      cliproxyAuthChooseFiles: '选择 Auth JSON 文件',
+      cliproxyAuthSelected: '已选择 {count} 个文件',
+      cliproxyAuthSkipDefaultGroup: '导入账号不自动绑定默认分组',
+      cliproxyAuthImport: '导入 CLIProxyAPI Auth',
+      cliproxyAuthExport: '导出 CLIProxyAPI Auth',
+      cliproxyAuthImportSuccess: '已导入 {count} 个 CLIProxyAPI Auth 账号',
+      cliproxyAuthImportFailed: '导入 CLIProxyAPI Auth 文件失败',
+      cliproxyAuthExported: '已导出 {count} 个 CLIProxyAPI Auth 文件',
+      cliproxyAuthExportFailed: '导出 CLIProxyAPI Auth 文件失败',
       dataExportConfirmMessage: '导出的数据包含账号与代理的敏感信息，请妥善保存。',
       dataExportConfirm: '确认导出',
       dataExported: '数据导出成功',
