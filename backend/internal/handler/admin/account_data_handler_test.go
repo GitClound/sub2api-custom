@@ -70,6 +70,7 @@ func setupAccountDataRouter() (*gin.Engine, *stubAdminService) {
 	router.GET("/api/v1/admin/accounts/data", h.ExportData)
 	router.POST("/api/v1/admin/accounts/data", h.ImportData)
 	router.GET("/api/v1/admin/accounts/cliproxy-auths", h.ExportCLIProxyAuthFiles)
+	router.POST("/api/v1/admin/accounts/cliproxy-auths/check-duplicates", h.CheckCLIProxyAuthDuplicates)
 	router.POST("/api/v1/admin/accounts/cliproxy-auths", h.ImportCLIProxyAuthFiles)
 	return router, adminSvc
 }
@@ -306,4 +307,165 @@ func TestExportCLIProxyAuthFilesReturnsCodexJSON(t *testing.T) {
 	require.Equal(t, "codex", resp.Data.Files[0].Data["type"])
 	require.Equal(t, "acct_123", resp.Data.Files[0].Data["account_id"])
 	require.Equal(t, "2026-04-24T12:00:00Z", resp.Data.Files[0].Data["expired"])
+}
+
+func TestCheckCLIProxyAuthDuplicatesReturnsMatches(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.accounts = []service.Account{
+		{
+			ID:       101,
+			Name:     "existing-openai",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"chatgpt_account_id": "acct_dup",
+				"email":              "dup@example.com",
+			},
+		},
+	}
+
+	payload := map[string]any{
+		"files": []map[string]any{
+			{
+				"name": "dup.json",
+				"data": map[string]any{
+					"type":          "codex",
+					"access_token":  "access",
+					"refresh_token": "refresh",
+					"email":         "dup@example.com",
+					"account_id":    "acct_dup",
+				},
+			},
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/cliproxy-auths/check-duplicates", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			Duplicates []CLIProxyAuthDuplicateItem `json:"duplicates"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Data.Duplicates, 1)
+	require.Equal(t, "existing-openai", resp.Data.Duplicates[0].ExistingAccountName)
+	require.Equal(t, int64(101), resp.Data.Duplicates[0].ExistingAccountID)
+	require.Equal(t, "chatgpt_account_id", resp.Data.Duplicates[0].MatchedBy)
+}
+
+func TestImportCLIProxyAuthSkipDuplicateSkipsExistingAccount(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.accounts = []service.Account{
+		{
+			ID:       102,
+			Name:     "existing-openai",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"chatgpt_account_id": "acct_dup",
+			},
+		},
+	}
+
+	payload := map[string]any{
+		"files": []map[string]any{
+			{
+				"name": "dup.json",
+				"data": map[string]any{
+					"type":          "codex",
+					"access_token":  "access",
+					"refresh_token": "refresh",
+					"account_id":    "acct_dup",
+				},
+			},
+		},
+		"duplicate_strategy": "skip",
+	}
+
+	body, _ := json.Marshal(payload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/cliproxy-auths", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Code int              `json:"code"`
+		Data DataImportResult `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 0, resp.Data.AccountCreated)
+	require.Equal(t, 0, resp.Data.AccountReplaced)
+	require.Equal(t, 1, resp.Data.AccountSkipped)
+	require.Len(t, adminSvc.createdAccounts, 0)
+	require.Len(t, adminSvc.updatedAccounts, 0)
+}
+
+func TestImportCLIProxyAuthReplaceDuplicateUpdatesExistingAccount(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.accounts = []service.Account{
+		{
+			ID:       103,
+			Name:     "old-name",
+			Platform: service.PlatformOpenAI,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"chatgpt_account_id": "acct_dup",
+				"refresh_token":      "old-refresh",
+			},
+			Extra: map[string]any{
+				"privacy_mode": "training_off",
+			},
+		},
+	}
+
+	payload := map[string]any{
+		"files": []map[string]any{
+			{
+				"name": "replace.json",
+				"data": map[string]any{
+					"type":          "codex",
+					"access_token":  "new-access",
+					"refresh_token": "new-refresh",
+					"email":         "new@example.com",
+					"account_id":    "acct_dup",
+				},
+			},
+		},
+		"duplicate_strategy": "replace",
+	}
+
+	body, _ := json.Marshal(payload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/cliproxy-auths", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Code int              `json:"code"`
+		Data DataImportResult `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 0, resp.Data.AccountCreated)
+	require.Equal(t, 1, resp.Data.AccountReplaced)
+	require.Equal(t, 0, resp.Data.AccountSkipped)
+	require.Len(t, adminSvc.createdAccounts, 0)
+	require.Len(t, adminSvc.updatedAccounts, 1)
+	require.Equal(t, int64(103), adminSvc.updatedAccountIDs[0])
+	require.Equal(t, "new@example.com", adminSvc.updatedAccounts[0].Name)
+	require.Equal(t, "new-refresh", adminSvc.updatedAccounts[0].Credentials["refresh_token"])
+	require.Equal(t, "training_off", adminSvc.updatedAccounts[0].Extra["privacy_mode"])
+	require.Equal(t, "replace.json", adminSvc.updatedAccounts[0].Extra["cliproxy_auth_file"])
 }

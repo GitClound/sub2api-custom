@@ -46,7 +46,7 @@
           {{ t('admin.accounts.dataImportResult') }}
         </div>
         <div class="text-sm text-gray-700 dark:text-dark-300">
-          {{ t('admin.accounts.dataImportResultSummary', result) }}
+          {{ t('admin.accounts.cliproxyAuthImportResultSummary', result) }}
         </div>
         <div v-if="errorItems.length" class="mt-2">
           <div class="text-sm font-medium text-red-600 dark:text-red-400">
@@ -72,6 +72,46 @@
       </div>
     </template>
   </BaseDialog>
+
+  <BaseDialog :show="showDuplicateDialog" :title="t('admin.accounts.cliproxyAuthDuplicateTitle')" width="wide" @close="closeDuplicateDialog">
+    <div class="space-y-4">
+      <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+        {{ t('admin.accounts.cliproxyAuthDuplicateMessage', { count: duplicateItems.length }) }}
+      </div>
+
+      <div class="max-h-72 space-y-3 overflow-auto rounded-xl border border-gray-200 p-4 dark:border-dark-700">
+        <div v-for="(item, index) in duplicateItems" :key="`${item.existing_account_id}-${index}`" class="rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-800">
+          <div class="font-medium text-gray-900 dark:text-white">
+            {{ item.import_name }}
+          </div>
+          <div v-if="item.source_file" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('admin.accounts.cliproxyAuthDuplicateSourceFile', { file: item.source_file }) }}
+          </div>
+          <div class="mt-2 text-xs text-gray-600 dark:text-dark-300">
+            {{ t('admin.accounts.cliproxyAuthDuplicateExisting', {
+              name: item.existing_account_name,
+              id: item.existing_account_id,
+              matchedBy: duplicateMatchLabel(item.matched_by)
+            }) }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <template #footer>
+      <div class="flex justify-end gap-3">
+        <button class="btn btn-secondary" type="button" :disabled="busy" @click="closeDuplicateDialog">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="btn btn-secondary" type="button" :disabled="busy" @click="handleDuplicateDecision('skip')">
+          {{ t('admin.accounts.cliproxyAuthDuplicateKeepExisting') }}
+        </button>
+        <button class="btn btn-primary" type="button" :disabled="busy" @click="handleDuplicateDecision('replace')">
+          {{ t('admin.accounts.cliproxyAuthDuplicateReplaceExisting') }}
+        </button>
+      </div>
+    </template>
+  </BaseDialog>
 </template>
 
 <script setup lang="ts">
@@ -80,7 +120,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
-import type { AdminDataImportResult, CLIProxyAuthFile } from '@/types'
+import type { AdminDataImportResult, CLIProxyAuthDuplicateItem, CLIProxyAuthFile } from '@/types'
 
 interface Props {
   show: boolean
@@ -114,6 +154,9 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const concurrency = ref(3)
 const priority = ref(50)
 const skipDefaultGroupBind = ref(true)
+const showDuplicateDialog = ref(false)
+const pendingAuthFiles = ref<CLIProxyAuthFile[]>([])
+const duplicateItems = ref<CLIProxyAuthDuplicateItem[]>([])
 
 const errorItems = computed(() => result.value?.errors || [])
 
@@ -121,18 +164,26 @@ watch(
   () => props.show,
   (open) => {
     if (open) {
-      files.value = []
-      result.value = null
-      concurrency.value = 3
-      priority.value = 50
-      skipDefaultGroupBind.value = true
-      if (fileInput.value) fileInput.value.value = ''
+      resetState()
     }
   }
 )
 
+const resetState = () => {
+  files.value = []
+  result.value = null
+  concurrency.value = 3
+  priority.value = 50
+  skipDefaultGroupBind.value = true
+  showDuplicateDialog.value = false
+  pendingAuthFiles.value = []
+  duplicateItems.value = []
+  if (fileInput.value) fileInput.value.value = ''
+}
+
 const handleClose = () => {
   if (busy.value) return
+  resetState()
   emit('close')
 }
 
@@ -165,26 +216,24 @@ const loadAuthFiles = async (): Promise<CLIProxyAuthFile[]> => {
   return loaded
 }
 
-const handleImport = async () => {
-  if (!files.value.length) {
-    appStore.showError(t('admin.accounts.dataImportSelectFile'))
-    return
-  }
-
+const submitImport = async (authFiles: CLIProxyAuthFile[], duplicateStrategy: 'skip' | 'replace') => {
   busy.value = true
   try {
-    const authFiles = await loadAuthFiles()
     const res = await adminAPI.accounts.importCLIProxyAuths({
       files: authFiles,
       skip_default_group_bind: skipDefaultGroupBind.value,
       concurrency: concurrency.value,
-      priority: priority.value
+      priority: priority.value,
+      duplicate_strategy: duplicateStrategy
     })
+    showDuplicateDialog.value = false
+    pendingAuthFiles.value = []
+    duplicateItems.value = []
     result.value = res
     if (res.account_failed > 0 || res.proxy_failed > 0) {
       appStore.showError(t('admin.accounts.dataImportCompletedWithErrors', importMessageParams(res)))
     } else {
-      appStore.showSuccess(t('admin.accounts.cliproxyAuthImportSuccess', { count: res.account_created }))
+      appStore.showSuccess(t('admin.accounts.cliproxyAuthImportSuccess', importMessageParams(res)))
       emit('imported')
     }
   } catch (error: any) {
@@ -198,13 +247,73 @@ const handleImport = async () => {
   }
 }
 
+const handleImport = async () => {
+  if (!files.value.length) {
+    appStore.showError(t('admin.accounts.dataImportSelectFile'))
+    return
+  }
+
+  let loadedAuthFiles: CLIProxyAuthFile[] = []
+  busy.value = true
+  try {
+    loadedAuthFiles = await loadAuthFiles()
+    const duplicateCheck = await adminAPI.accounts.checkCLIProxyAuthDuplicates({
+      files: loadedAuthFiles,
+      skip_default_group_bind: skipDefaultGroupBind.value,
+      concurrency: concurrency.value,
+      priority: priority.value
+    })
+
+    if (duplicateCheck.duplicates.length > 0) {
+      pendingAuthFiles.value = loadedAuthFiles
+      duplicateItems.value = duplicateCheck.duplicates
+      showDuplicateDialog.value = true
+      return
+    }
+  } catch (error: any) {
+    if (error instanceof SyntaxError) {
+      appStore.showError(t('admin.accounts.dataImportParseFailed'))
+    } else {
+      appStore.showError(error?.message || t('admin.accounts.cliproxyAuthImportFailed'))
+    }
+    return
+  } finally {
+    busy.value = false
+  }
+
+  await submitImport(loadedAuthFiles, 'skip')
+}
+
 const importMessageParams = (res: AdminDataImportResult): Record<string, unknown> => ({
   account_created: res.account_created,
+  account_replaced: res.account_replaced,
+  account_skipped: res.account_skipped,
   account_failed: res.account_failed,
   proxy_created: res.proxy_created,
   proxy_reused: res.proxy_reused,
   proxy_failed: res.proxy_failed
 })
+
+const closeDuplicateDialog = () => {
+  if (busy.value) return
+  showDuplicateDialog.value = false
+  pendingAuthFiles.value = []
+  duplicateItems.value = []
+}
+
+const handleDuplicateDecision = async (strategy: 'skip' | 'replace') => {
+  if (!pendingAuthFiles.value.length) {
+    closeDuplicateDialog()
+    return
+  }
+  await submitImport(pendingAuthFiles.value, strategy)
+}
+
+const duplicateMatchLabel = (field: string): string => {
+  const key = `admin.accounts.cliproxyAuthDuplicateMatchBy.${field}`
+  const translated = t(key)
+  return translated === key ? field : translated
+}
 
 const handleExport = async () => {
   if (busy.value) return

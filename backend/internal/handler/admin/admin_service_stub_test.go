@@ -18,6 +18,8 @@ type stubAdminService struct {
 	proxyCounts          []service.ProxyWithAccountCount
 	redeems              []service.RedeemCode
 	createdAccounts      []*service.CreateAccountInput
+	updatedAccountIDs    []int64
+	updatedAccounts      []*service.UpdateAccountInput
 	createdProxies       []*service.CreateProxyInput
 	updatedProxyIDs      []int64
 	updatedProxies       []*service.UpdateProxyInput
@@ -192,6 +194,12 @@ func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int,
 }
 
 func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.Account, error) {
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			account := s.accounts[i]
+			return &account, nil
+		}
+	}
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil
 }
@@ -199,8 +207,19 @@ func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.A
 func (s *stubAdminService) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {
 	out := make([]*service.Account, 0, len(ids))
 	for _, id := range ids {
-		account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
-		out = append(out, &account)
+		found := false
+		for i := range s.accounts {
+			if s.accounts[i].ID == id {
+				account := s.accounts[i]
+				out = append(out, &account)
+				found = true
+				break
+			}
+		}
+		if !found {
+			account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
+			out = append(out, &account)
+		}
 	}
 	return out, nil
 }
@@ -217,10 +236,32 @@ func (s *stubAdminService) CreateAccount(ctx context.Context, input *service.Cre
 }
 
 func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
+	s.mu.Lock()
+	s.updatedAccountIDs = append(s.updatedAccountIDs, id)
+	s.updatedAccounts = append(s.updatedAccounts, input)
+	s.mu.Unlock()
 	if s.updateAccountErr != nil {
 		return nil, s.updateAccountErr
 	}
 	account := service.Account{ID: id, Name: input.Name, Status: service.StatusActive}
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			account = s.accounts[i]
+			if input.Name != "" {
+				account.Name = input.Name
+			}
+			if input.Type != "" {
+				account.Type = input.Type
+			}
+			if len(input.Credentials) > 0 {
+				account.Credentials = input.Credentials
+			}
+			if input.Extra != nil {
+				account.Extra = input.Extra
+			}
+			break
+		}
+	}
 	return &account, nil
 }
 

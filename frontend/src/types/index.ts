@@ -959,6 +959,8 @@ export interface AdminDataImportResult {
   proxy_reused: number
   proxy_failed: number
   account_created: number
+  account_replaced: number
+  account_skipped: number
   account_failed: number
   errors?: AdminDataImportError[]
 }
@@ -966,6 +968,19 @@ export interface AdminDataImportResult {
 export interface CLIProxyAuthFile {
   name: string
   data: Record<string, unknown>
+}
+
+export interface CLIProxyAuthDuplicateItem {
+  import_name: string
+  source_file?: string
+  platform: string
+  matched_by: string
+  existing_account_id: number
+  existing_account_name: string
+}
+
+export interface CLIProxyAuthDuplicateCheckResult {
+  duplicates: CLIProxyAuthDuplicateItem[]
 }
 
 export interface CLIProxyAuthExportPayload {

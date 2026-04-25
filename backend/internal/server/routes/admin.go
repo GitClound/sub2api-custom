@@ -278,6 +278,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.GET("/data", h.Admin.Account.ExportData)
 		accounts.POST("/data", h.Admin.Account.ImportData)
 		accounts.GET("/cliproxy-auths", h.Admin.Account.ExportCLIProxyAuthFiles)
+		accounts.POST("/cliproxy-auths/check-duplicates", h.Admin.Account.CheckCLIProxyAuthDuplicates)
 		accounts.POST("/cliproxy-auths", h.Admin.Account.ImportCLIProxyAuthFiles)
 		accounts.POST("/batch-update-credentials", h.Admin.Account.BatchUpdateCredentials)
 		accounts.POST("/batch-refresh-tier", h.Admin.Account.BatchRefreshTier)

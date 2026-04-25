@@ -16,6 +16,7 @@ import type {
   TempUnschedulableStatus,
   AdminDataPayload,
   AdminDataImportResult,
+  CLIProxyAuthDuplicateCheckResult,
   CLIProxyAuthExportPayload,
   CLIProxyAuthFile,
   CheckMixedChannelRequest,
@@ -562,8 +563,19 @@ export async function importCLIProxyAuths(payload: {
   skip_default_group_bind?: boolean
   concurrency?: number
   priority?: number
+  duplicate_strategy?: 'skip' | 'replace'
 }): Promise<AdminDataImportResult> {
   const { data } = await apiClient.post<AdminDataImportResult>('/admin/accounts/cliproxy-auths', payload)
+  return data
+}
+
+export async function checkCLIProxyAuthDuplicates(payload: {
+  files: CLIProxyAuthFile[]
+  skip_default_group_bind?: boolean
+  concurrency?: number
+  priority?: number
+}): Promise<CLIProxyAuthDuplicateCheckResult> {
+  const { data } = await apiClient.post<CLIProxyAuthDuplicateCheckResult>('/admin/accounts/cliproxy-auths/check-duplicates', payload)
   return data
 }
 
@@ -685,6 +697,7 @@ export const accountsAPI = {
   importData,
   exportCLIProxyAuths,
   importCLIProxyAuths,
+  checkCLIProxyAuthDuplicates,
   getAntigravityDefaultModelMapping,
   batchClearError,
   batchRefresh,

@@ -63,12 +63,14 @@ type DataImportRequest struct {
 }
 
 type DataImportResult struct {
-	ProxyCreated   int               `json:"proxy_created"`
-	ProxyReused    int               `json:"proxy_reused"`
-	ProxyFailed    int               `json:"proxy_failed"`
-	AccountCreated int               `json:"account_created"`
-	AccountFailed  int               `json:"account_failed"`
-	Errors         []DataImportError `json:"errors,omitempty"`
+	ProxyCreated    int               `json:"proxy_created"`
+	ProxyReused     int               `json:"proxy_reused"`
+	ProxyFailed     int               `json:"proxy_failed"`
+	AccountCreated  int               `json:"account_created"`
+	AccountReplaced int               `json:"account_replaced"`
+	AccountSkipped  int               `json:"account_skipped"`
+	AccountFailed   int               `json:"account_failed"`
+	Errors          []DataImportError `json:"errors,omitempty"`
 }
 
 type DataImportError struct {

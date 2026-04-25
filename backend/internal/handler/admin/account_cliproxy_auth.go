@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -22,6 +23,7 @@ type CLIProxyAuthImportRequest struct {
 	SkipDefaultGroupBind *bool              `json:"skip_default_group_bind"`
 	Concurrency          int                `json:"concurrency"`
 	Priority             int                `json:"priority"`
+	DuplicateStrategy    string             `json:"duplicate_strategy"`
 }
 
 type CLIProxyAuthFile struct {
@@ -36,6 +38,29 @@ type CLIProxyAuthExportPayload struct {
 	Files      []CLIProxyAuthFile `json:"files"`
 }
 
+const (
+	cliProxyAuthDuplicateStrategySkip    = "skip"
+	cliProxyAuthDuplicateStrategyReplace = "replace"
+)
+
+type CLIProxyAuthDuplicateItem struct {
+	ImportName          string `json:"import_name"`
+	SourceFile          string `json:"source_file,omitempty"`
+	Platform            string `json:"platform"`
+	MatchedBy           string `json:"matched_by"`
+	ExistingAccountID   int64  `json:"existing_account_id"`
+	ExistingAccountName string `json:"existing_account_name"`
+}
+
+type CLIProxyAuthDuplicateCheckResult struct {
+	Duplicates []CLIProxyAuthDuplicateItem `json:"duplicates"`
+}
+
+type cliProxyAuthDuplicateIdentity struct {
+	Key   string
+	Field string
+}
+
 func (h *AccountHandler) ImportCLIProxyAuthFiles(c *gin.Context) {
 	var req CLIProxyAuthImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -48,9 +73,37 @@ func (h *AccountHandler) ImportCLIProxyAuthFiles(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if strategy := normalizeCLIProxyAuthDuplicateStrategy(req.DuplicateStrategy); strategy == "" {
+		response.BadRequest(c, "invalid duplicate_strategy")
+		return
+	}
 
 	executeAdminIdempotentJSON(c, "admin.accounts.import_cliproxy_auths", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		return h.importData(ctx, dataReq)
+		return h.importCLIProxyAuthData(ctx, req, dataReq)
+	})
+}
+
+func (h *AccountHandler) CheckCLIProxyAuthDuplicates(c *gin.Context) {
+	var req CLIProxyAuthImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	dataReq, err := buildDataImportRequestFromCLIProxyAuths(req)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	duplicates, _, err := h.findCLIProxyAuthDuplicates(c.Request.Context(), dataReq.Data.Accounts)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, CLIProxyAuthDuplicateCheckResult{
+		Duplicates: duplicates,
 	})
 }
 
@@ -261,6 +314,323 @@ func buildCLIProxyAuthFileFromAccount(account service.Account) (CLIProxyAuthFile
 		Name: cliProxyAuthFileName(account),
 		Data: data,
 	}, true
+}
+
+func (h *AccountHandler) importCLIProxyAuthData(ctx context.Context, req CLIProxyAuthImportRequest, dataReq DataImportRequest) (DataImportResult, error) {
+	skipDefaultGroupBind := true
+	if req.SkipDefaultGroupBind != nil {
+		skipDefaultGroupBind = *req.SkipDefaultGroupBind
+	}
+
+	result := DataImportResult{}
+
+	existingProxies, err := h.listAllProxies(ctx)
+	if err != nil {
+		return result, err
+	}
+
+	proxyKeyToID := make(map[string]int64, len(existingProxies))
+	for i := range existingProxies {
+		p := existingProxies[i]
+		key := buildProxyKey(p.Protocol, p.Host, p.Port, p.Username, p.Password)
+		proxyKeyToID[key] = p.ID
+	}
+
+	_, duplicateAccounts, err := h.findCLIProxyAuthDuplicates(ctx, dataReq.Data.Accounts)
+	if err != nil {
+		return result, err
+	}
+
+	duplicateStrategy := normalizeCLIProxyAuthDuplicateStrategy(req.DuplicateStrategy)
+	if duplicateStrategy == "" {
+		duplicateStrategy = cliProxyAuthDuplicateStrategySkip
+	}
+
+	duplicateByIndex := make(map[int]service.Account, len(duplicateAccounts))
+	for index, account := range duplicateAccounts {
+		duplicateByIndex[index] = account
+	}
+
+	var privacyAccounts []*service.Account
+	for i := range dataReq.Data.Accounts {
+		item := dataReq.Data.Accounts[i]
+		if err := validateDataAccount(item); err != nil {
+			result.AccountFailed++
+			result.Errors = append(result.Errors, DataImportError{
+				Kind:    "account",
+				Name:    item.Name,
+				Message: err.Error(),
+			})
+			continue
+		}
+
+		var proxyID *int64
+		if item.ProxyKey != nil && *item.ProxyKey != "" {
+			if id, ok := proxyKeyToID[*item.ProxyKey]; ok {
+				proxyID = &id
+			} else {
+				result.AccountFailed++
+				result.Errors = append(result.Errors, DataImportError{
+					Kind:     "account",
+					Name:     item.Name,
+					ProxyKey: *item.ProxyKey,
+					Message:  "proxy_key not found",
+				})
+				continue
+			}
+		}
+
+		enrichCredentialsFromIDToken(&item)
+
+		if existingAccount, ok := duplicateByIndex[i]; ok {
+			if duplicateStrategy == cliProxyAuthDuplicateStrategyReplace {
+				updated, updateErr := h.replaceCLIProxyAuthDuplicate(ctx, existingAccount, item, proxyID)
+				if updateErr != nil {
+					result.AccountFailed++
+					result.Errors = append(result.Errors, DataImportError{
+						Kind:    "account",
+						Name:    item.Name,
+						Message: updateErr.Error(),
+					})
+					continue
+				}
+				if updated != nil && updated.Platform == service.PlatformAntigravity && updated.Type == service.AccountTypeOAuth {
+					privacyAccounts = append(privacyAccounts, updated)
+				}
+				result.AccountReplaced++
+				continue
+			}
+
+			result.AccountSkipped++
+			continue
+		}
+
+		accountInput := &service.CreateAccountInput{
+			Name:                 item.Name,
+			Notes:                item.Notes,
+			Platform:             item.Platform,
+			Type:                 item.Type,
+			Credentials:          item.Credentials,
+			Extra:                item.Extra,
+			ProxyID:              proxyID,
+			Concurrency:          item.Concurrency,
+			Priority:             item.Priority,
+			RateMultiplier:       item.RateMultiplier,
+			GroupIDs:             nil,
+			ExpiresAt:            item.ExpiresAt,
+			AutoPauseOnExpired:   item.AutoPauseOnExpired,
+			SkipDefaultGroupBind: skipDefaultGroupBind,
+		}
+
+		created, createErr := h.adminService.CreateAccount(ctx, accountInput)
+		if createErr != nil {
+			result.AccountFailed++
+			result.Errors = append(result.Errors, DataImportError{
+				Kind:    "account",
+				Name:    item.Name,
+				Message: createErr.Error(),
+			})
+			continue
+		}
+		if created.Platform == service.PlatformAntigravity && created.Type == service.AccountTypeOAuth {
+			privacyAccounts = append(privacyAccounts, created)
+		}
+		result.AccountCreated++
+	}
+
+	if len(privacyAccounts) > 0 {
+		adminSvc := h.adminService
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("import_antigravity_privacy_panic", "recover", r)
+				}
+			}()
+			bgCtx := context.Background()
+			for _, acc := range privacyAccounts {
+				adminSvc.ForceAntigravityPrivacy(bgCtx, acc)
+			}
+			slog.Info("import_antigravity_privacy_done", "count", len(privacyAccounts))
+		}()
+	}
+
+	return result, nil
+}
+
+func (h *AccountHandler) findCLIProxyAuthDuplicates(ctx context.Context, importedAccounts []DataAccount) ([]CLIProxyAuthDuplicateItem, map[int]service.Account, error) {
+	existingAccounts, err := h.listAccountsFiltered(ctx, "", "", "", "")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	existingByIdentity := make(map[string]service.Account)
+	for i := range existingAccounts {
+		account := existingAccounts[i]
+		if strings.TrimSpace(strings.ToLower(account.Type)) != service.AccountTypeOAuth {
+			continue
+		}
+		for _, identity := range cliProxyAuthDuplicateIdentities(account.Platform, account.Credentials) {
+			if identity.Key == "" {
+				continue
+			}
+			if _, exists := existingByIdentity[identity.Key]; !exists {
+				existingByIdentity[identity.Key] = account
+			}
+		}
+	}
+
+	duplicates := make([]CLIProxyAuthDuplicateItem, 0)
+	duplicateAccounts := make(map[int]service.Account)
+	for i := range importedAccounts {
+		item := importedAccounts[i]
+		match := cliProxyAuthDuplicateMatch{}
+		for _, identity := range cliProxyAuthDuplicateIdentities(item.Platform, item.Credentials) {
+			if identity.Key == "" {
+				continue
+			}
+			existingAccount, ok := existingByIdentity[identity.Key]
+			if !ok {
+				continue
+			}
+			match = cliProxyAuthDuplicateMatch{
+				Account: existingAccount,
+				Field:   identity.Field,
+			}
+			break
+		}
+		if match.Account.ID == 0 {
+			continue
+		}
+		duplicateAccounts[i] = match.Account
+		duplicates = append(duplicates, CLIProxyAuthDuplicateItem{
+			ImportName:          item.Name,
+			SourceFile:          cliProxyAuthSourceFile(item),
+			Platform:            item.Platform,
+			MatchedBy:           match.Field,
+			ExistingAccountID:   match.Account.ID,
+			ExistingAccountName: match.Account.Name,
+		})
+	}
+
+	return duplicates, duplicateAccounts, nil
+}
+
+func (h *AccountHandler) replaceCLIProxyAuthDuplicate(ctx context.Context, existingAccount service.Account, item DataAccount, proxyID *int64) (*service.Account, error) {
+	updateInput := &service.UpdateAccountInput{
+		Name:               item.Name,
+		Notes:              item.Notes,
+		Type:               item.Type,
+		Credentials:        item.Credentials,
+		RateMultiplier:     item.RateMultiplier,
+		ExpiresAt:          item.ExpiresAt,
+		AutoPauseOnExpired: item.AutoPauseOnExpired,
+	}
+
+	if proxyID != nil {
+		updateInput.ProxyID = proxyID
+	}
+
+	concurrency := item.Concurrency
+	priority := item.Priority
+	updateInput.Concurrency = &concurrency
+	updateInput.Priority = &priority
+
+	if mergedExtra := mergeCLIProxyAuthExtra(existingAccount.Extra, item.Extra); mergedExtra != nil {
+		updateInput.Extra = mergedExtra
+	}
+
+	return h.adminService.UpdateAccount(ctx, existingAccount.ID, updateInput)
+}
+
+func mergeCLIProxyAuthExtra(existing, imported map[string]any) map[string]any {
+	if len(imported) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(existing)+len(imported))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range imported {
+		merged[key] = value
+	}
+	return merged
+}
+
+func cliProxyAuthSourceFile(item DataAccount) string {
+	if item.Extra == nil {
+		return ""
+	}
+	return stringValue(item.Extra, "cliproxy_auth_file")
+}
+
+func normalizeCLIProxyAuthDuplicateStrategy(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", cliProxyAuthDuplicateStrategySkip:
+		return cliProxyAuthDuplicateStrategySkip
+	case cliProxyAuthDuplicateStrategyReplace:
+		return cliProxyAuthDuplicateStrategyReplace
+	default:
+		return ""
+	}
+}
+
+type cliProxyAuthDuplicateMatch struct {
+	Account service.Account
+	Field   string
+}
+
+func cliProxyAuthDuplicateIdentities(platform string, credentials map[string]any) []cliProxyAuthDuplicateIdentity {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	out := make([]cliProxyAuthDuplicateIdentity, 0, 5)
+	appendIdentity := func(field string, values ...string) {
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			out = append(out, cliProxyAuthDuplicateIdentity{
+				Key:   buildCLIProxyAuthDuplicateKey(platform, field, value),
+				Field: field,
+			})
+			return
+		}
+	}
+	switch platform {
+	case service.PlatformOpenAI:
+		appendIdentity("chatgpt_account_id", firstStringValue(credentials, "chatgpt_account_id", "account_id"))
+		appendIdentity("email", firstStringValue(credentials, "email"))
+		appendIdentity("chatgpt_user_id", firstStringValue(credentials, "chatgpt_user_id"))
+	case service.PlatformGemini, service.PlatformAntigravity:
+		projectID := firstStringValue(credentials, "project_id")
+		if projectID != "" {
+			appendIdentity("project_id", projectID)
+		} else {
+			appendIdentity("email", firstStringValue(credentials, "email"))
+		}
+	default:
+		appendIdentity("email", firstStringValue(credentials, "email"))
+	}
+
+	appendIdentity("refresh_token", firstStringValue(credentials, "refresh_token"))
+	appendIdentity("access_token", firstStringValue(credentials, "access_token"))
+
+	seen := make(map[string]struct{}, len(out))
+	deduped := make([]cliProxyAuthDuplicateIdentity, 0, len(out))
+	for _, identity := range out {
+		if _, exists := seen[identity.Key]; exists {
+			continue
+		}
+		seen[identity.Key] = struct{}{}
+		deduped = append(deduped, identity)
+	}
+	return deduped
+}
+
+func buildCLIProxyAuthDuplicateKey(platform, field, value string) string {
+	normalizedValue := strings.TrimSpace(value)
+	if field != "refresh_token" && field != "access_token" {
+		normalizedValue = strings.ToLower(normalizedValue)
+	}
+	return platform + "|" + field + "|" + normalizedValue
 }
 
 func cliProxyAuthFileName(account service.Account) string {
