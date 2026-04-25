@@ -691,6 +691,19 @@ export default {
       geminiCli: 'Gemini CLI',
       geminiCliDesc: '导入为 Gemini CLI 配置'
     },
+    ccsEndpointSelect: {
+      title: '选择 CCS 端点',
+      description: '默认使用当前分组对应的兼容接口，也可以选择站点配置的自定义端点或手动输入。',
+      defaultCompatible: '默认兼容接口',
+      defaultHint: '根据 API 密钥绑定分组的平台自动生成，无需额外修改客户端配置。',
+      importDefault: '使用默认端点导入',
+      customTitle: '自定义端点',
+      customHint: '适用于反向代理、多线路或你在后台配置的额外入口。',
+      useThis: '使用此端点',
+      manualEndpoint: '手动输入端点',
+      manualPlaceholder: 'https://api.example.com/v1',
+      importCustom: '使用自定义端点导入'
+    },
     // 配额和有效期
     quotaLimit: '额度限制',
     quotaAmount: '额度金额 (USD)',

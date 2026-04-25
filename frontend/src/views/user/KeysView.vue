@@ -969,6 +969,101 @@
       </template>
     </BaseDialog>
 
+    <!-- CCS Endpoint Selection Dialog -->
+    <BaseDialog
+      :show="showCcsEndpointSelect"
+      :title="t('keys.ccsEndpointSelect.title')"
+      width="normal"
+      @close="closeCcsEndpointSelect"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('keys.ccsEndpointSelect.description') }}
+        </p>
+
+        <div class="rounded-xl border border-primary-200 bg-primary-50 p-4 dark:border-primary-800 dark:bg-primary-900/20">
+          <div class="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <p class="font-medium text-gray-900 dark:text-white">
+                {{ t('keys.ccsEndpointSelect.defaultCompatible') }}
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.ccsEndpointSelect.defaultHint') }}
+              </p>
+            </div>
+            <span class="rounded bg-primary-100 px-2 py-1 text-xs font-medium text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">
+              {{ t('keys.endpoints.default') }}
+            </span>
+          </div>
+          <code class="block break-all rounded-lg bg-white px-3 py-2 text-sm text-gray-700 dark:bg-dark-800 dark:text-gray-200">
+            {{ ccsDefaultEndpoint }}
+          </code>
+          <button
+            type="button"
+            class="btn btn-primary mt-3 w-full"
+            @click="executePendingCcsImport(ccsDefaultEndpoint)"
+          >
+            {{ t('keys.ccsEndpointSelect.importDefault') }}
+          </button>
+        </div>
+
+        <div class="space-y-3">
+          <div>
+            <p class="font-medium text-gray-900 dark:text-white">
+              {{ t('keys.ccsEndpointSelect.customTitle') }}
+            </p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('keys.ccsEndpointSelect.customHint') }}
+            </p>
+          </div>
+
+          <div v-if="ccsCustomEndpoints.length > 0" class="space-y-2">
+            <button
+              v-for="endpoint in ccsCustomEndpoints"
+              :key="endpoint.endpoint"
+              type="button"
+              class="w-full rounded-xl border border-gray-200 p-3 text-left transition-colors hover:border-primary-300 hover:bg-primary-50 dark:border-dark-600 dark:hover:border-primary-700 dark:hover:bg-primary-900/20"
+              @click="executePendingCcsImport(endpoint.endpoint)"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <span class="font-medium text-gray-900 dark:text-white">{{ endpoint.name }}</span>
+                <span class="text-xs text-primary-600 dark:text-primary-400">{{ t('keys.ccsEndpointSelect.useThis') }}</span>
+              </div>
+              <code class="mt-1 block break-all text-xs text-gray-500 dark:text-gray-400">{{ endpoint.endpoint }}</code>
+              <p v-if="endpoint.description" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ endpoint.description }}
+              </p>
+            </button>
+          </div>
+
+          <div>
+            <label class="input-label">{{ t('keys.ccsEndpointSelect.manualEndpoint') }}</label>
+            <input
+              v-model.trim="ccsManualEndpoint"
+              type="url"
+              class="input font-mono text-sm"
+              :placeholder="t('keys.ccsEndpointSelect.manualPlaceholder')"
+            />
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button @click="closeCcsEndpointSelect" class="btn btn-secondary">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            class="btn btn-primary"
+            :disabled="!ccsManualEndpoint"
+            @click="executePendingCcsImport(ccsManualEndpoint)"
+          >
+            {{ t('keys.ccsEndpointSelect.importCustom') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+
     <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
     <Teleport to="body">
       <div
@@ -1127,7 +1222,10 @@ const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
 const showCcsClientSelect = ref(false)
+const showCcsEndpointSelect = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
+const pendingCcsClientType = ref<'claude' | 'gemini'>('claude')
+const ccsManualEndpoint = ref('')
 const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
@@ -1142,6 +1240,47 @@ const selectedKeyForGroup = computed(() => {
   if (groupSelectorKeyId.value === null) return null
   return apiKeys.value.find((k) => k.id === groupSelectorKeyId.value) || null
 })
+
+const ccsBaseUrl = computed(() => publicSettings.value?.api_base_url || window.location.origin)
+
+const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '')
+
+const stripKnownCompatSuffix = (value: string) => {
+  const trimmed = trimTrailingSlash(value)
+  if (trimmed.endsWith('/antigravity/v1beta')) return trimmed.slice(0, -'/antigravity/v1beta'.length)
+  if (trimmed.endsWith('/antigravity/v1')) return trimmed.slice(0, -'/antigravity/v1'.length)
+  if (trimmed.endsWith('/antigravity')) return trimmed.slice(0, -'/antigravity'.length)
+  if (trimmed.endsWith('/v1beta')) return trimmed.slice(0, -'/v1beta'.length)
+  if (trimmed.endsWith('/v1')) return trimmed.slice(0, -'/v1'.length)
+  return trimmed
+}
+
+const withPathSuffix = (base: string, suffix: string) => {
+  const root = stripKnownCompatSuffix(base)
+  return `${root}${suffix}`
+}
+
+const getCcsPlatform = (row: ApiKey | null) => row?.group?.platform || 'anthropic'
+
+const buildCompatibleEndpoint = (row: ApiKey | null, clientType: 'claude' | 'gemini') => {
+  const platform = getCcsPlatform(row)
+  switch (platform) {
+    case 'openai':
+      return withPathSuffix(ccsBaseUrl.value, '/v1')
+    case 'gemini':
+      return withPathSuffix(ccsBaseUrl.value, '/v1beta')
+    case 'antigravity':
+      return withPathSuffix(ccsBaseUrl.value, clientType === 'gemini' ? '/antigravity/v1beta' : '/antigravity')
+    default:
+      return stripKnownCompatSuffix(ccsBaseUrl.value)
+  }
+}
+
+const ccsDefaultEndpoint = computed(() =>
+  buildCompatibleEndpoint(pendingCcsRow.value, pendingCcsClientType.value)
+)
+
+const ccsCustomEndpoints = computed(() => publicSettings.value?.custom_endpoints || [])
 
 const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance | null) => {
   if (el instanceof HTMLElement) {
@@ -1669,45 +1808,63 @@ const importToCcswitch = (row: ApiKey) => {
   // For antigravity platform, show client selection dialog
   if (platform === 'antigravity') {
     pendingCcsRow.value = row
+    pendingCcsClientType.value = 'claude'
     showCcsClientSelect.value = true
     return
   }
 
-  // For other platforms, execute directly
-  executeCcsImport(row, platform === 'gemini' ? 'gemini' : 'claude')
+  pendingCcsRow.value = row
+  pendingCcsClientType.value = platform === 'gemini' ? 'gemini' : 'claude'
+  ccsManualEndpoint.value = ''
+  showCcsEndpointSelect.value = true
 }
 
-const executeCcsImport = (row: ApiKey, clientType: 'claude' | 'gemini') => {
-  const baseUrl = publicSettings.value?.api_base_url || window.location.origin
+const buildUsageUrl = (endpoint: string) => {
+  const trimmed = trimTrailingSlash(endpoint)
+  if (trimmed.endsWith('/antigravity/v1beta')) {
+    return `${trimmed.slice(0, -'/v1beta'.length)}/v1/usage`
+  }
+  if (trimmed.endsWith('/v1beta')) {
+    return `${trimmed.slice(0, -'/v1beta'.length)}/v1/usage`
+  }
+  if (trimmed.endsWith('/v1')) {
+    return `${trimmed}/usage`
+  }
+  return `${trimmed}/v1/usage`
+}
+
+const executePendingCcsImport = (endpoint: string) => {
+  if (!pendingCcsRow.value) return
+  executeCcsImport(pendingCcsRow.value, pendingCcsClientType.value, endpoint)
+  closeCcsEndpointSelect()
+}
+
+const executeCcsImport = (row: ApiKey, clientType: 'claude' | 'gemini', endpoint: string) => {
+  const baseUrl = ccsBaseUrl.value
   const platform = row.group?.platform || 'anthropic'
+  const normalizedEndpoint = trimTrailingSlash(endpoint)
 
   // Determine app name and endpoint based on platform and client type
   let app: string
-  let endpoint: string
 
   if (platform === 'antigravity') {
-    // Antigravity always uses /antigravity suffix
     app = clientType === 'gemini' ? 'gemini' : 'claude'
-    endpoint = `${baseUrl}/antigravity`
   } else {
     switch (platform) {
       case 'openai':
         app = 'codex'
-        endpoint = baseUrl
         break
       case 'gemini':
         app = 'gemini'
-        endpoint = baseUrl
         break
       default: // anthropic
         app = 'claude'
-        endpoint = baseUrl
     }
   }
 
   const usageScript = `({
     request: {
-      url: "{{baseUrl}}/v1/usage",
+      url: "${buildUsageUrl(normalizedEndpoint)}",
       method: "GET",
       headers: { "Authorization": "Bearer {{apiKey}}" }
     },
@@ -1728,7 +1885,7 @@ const executeCcsImport = (row: ApiKey, clientType: 'claude' | 'gemini') => {
     app: app,
     name: providerName,
     homepage: baseUrl,
-    endpoint: endpoint,
+    endpoint: normalizedEndpoint,
     apiKey: row.key,
     configFormat: 'json',
     usageEnabled: 'true',
@@ -1754,15 +1911,22 @@ const executeCcsImport = (row: ApiKey, clientType: 'claude' | 'gemini') => {
 
 const handleCcsClientSelect = (clientType: 'claude' | 'gemini') => {
   if (pendingCcsRow.value) {
-    executeCcsImport(pendingCcsRow.value, clientType)
+    pendingCcsClientType.value = clientType
+    ccsManualEndpoint.value = ''
+    showCcsEndpointSelect.value = true
   }
   showCcsClientSelect.value = false
-  pendingCcsRow.value = null
 }
 
 const closeCcsClientSelect = () => {
   showCcsClientSelect.value = false
   pendingCcsRow.value = null
+}
+
+const closeCcsEndpointSelect = () => {
+  showCcsEndpointSelect.value = false
+  pendingCcsRow.value = null
+  ccsManualEndpoint.value = ''
 }
 
 function formatResetTime(resetAt: string | null): string {
