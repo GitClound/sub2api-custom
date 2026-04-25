@@ -65,6 +65,35 @@
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
+        <div v-if="account.platform === 'openai'" class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
+          <div class="mb-3">
+            <label class="input-label">{{ t('admin.accounts.openai.compatTitle') }}</label>
+            <p class="input-hint">{{ t('admin.accounts.openai.compatDescription') }}</p>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="input-label">{{ t('admin.accounts.openai.providerName') }}</label>
+              <input
+                v-model="openAICompatProviderName"
+                type="text"
+                class="input"
+                :placeholder="t('admin.accounts.openai.providerNamePlaceholder')"
+              />
+              <p class="input-hint">{{ t('admin.accounts.openai.providerNameHint') }}</p>
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.openai.customHeaders') }}</label>
+              <textarea
+                v-model="openAICompatHeaders"
+                rows="5"
+                class="input font-mono"
+                :placeholder="t('admin.accounts.openai.customHeadersPlaceholder')"
+              ></textarea>
+              <p class="input-hint">{{ t('admin.accounts.openai.customHeadersHint') }}</p>
+            </div>
+          </div>
+        </div>
+
         <!-- Model Restriction Section (不适用于 Antigravity) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -1760,7 +1789,12 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
-import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
+import {
+  OPENAI_COMPAT_PROVIDER_NAME_EXTRA_KEY,
+  applyInterceptWarmup,
+  formatOpenAICompatHeaders,
+  parseOpenAICompatHeaders
+} from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import {
@@ -1824,6 +1858,8 @@ interface TempUnschedRuleForm {
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
+const openAICompatProviderName = ref('')
+const openAICompatHeaders = ref('')
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
 const editBedrockSecretAccessKey = ref('')
@@ -2066,6 +2102,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
+  openAICompatProviderName.value = ''
+  openAICompatHeaders.value = ''
   anthropicPassthroughEnabled.value = false
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
@@ -2203,6 +2241,14 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       selectedErrorCodes.value = [...existingErrorCodes]
     } else {
       selectedErrorCodes.value = []
+    }
+
+    if (newAccount.platform === 'openai') {
+      openAICompatProviderName.value =
+        typeof extra?.[OPENAI_COMPAT_PROVIDER_NAME_EXTRA_KEY] === 'string'
+          ? String(extra?.[OPENAI_COMPAT_PROVIDER_NAME_EXTRA_KEY]).trim()
+          : ''
+      openAICompatHeaders.value = formatOpenAICompatHeaders(credentials.headers)
     }
   } else if (newAccount.type === 'bedrock' && newAccount.credentials) {
     const bedrockCreds = newAccount.credentials as Record<string, unknown>
@@ -2766,6 +2812,20 @@ const handleSubmit = async () => {
         return
       }
 
+      if (props.account.platform === 'openai') {
+        try {
+          const compatHeaders = parseOpenAICompatHeaders(openAICompatHeaders.value)
+          if (Object.keys(compatHeaders).length > 0) {
+            newCredentials.headers = compatHeaders
+          } else {
+            delete newCredentials.headers
+          }
+        } catch {
+          appStore.showError(t('admin.accounts.openai.customHeadersInvalid'))
+          return
+        }
+      }
+
       // Add model mapping if configured（OpenAI 开启自动透传时保留现有映射，不再编辑）
       if (shouldApplyModelMapping) {
         const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
@@ -3078,6 +3138,13 @@ const handleSubmit = async () => {
           newExtra.codex_cli_only = false
         } else {
           delete newExtra.codex_cli_only
+        }
+      } else if (props.account.type === 'apikey') {
+        const providerName = openAICompatProviderName.value.trim()
+        if (providerName) {
+          newExtra[OPENAI_COMPAT_PROVIDER_NAME_EXTRA_KEY] = providerName
+        } else {
+          delete newExtra[OPENAI_COMPAT_PROVIDER_NAME_EXTRA_KEY]
         }
       }
 

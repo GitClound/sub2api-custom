@@ -883,6 +883,35 @@
           <p class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
+        <div v-if="form.platform === 'openai'" class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
+          <div class="mb-3">
+            <label class="input-label">{{ t('admin.accounts.openai.compatTitle') }}</label>
+            <p class="input-hint">{{ t('admin.accounts.openai.compatDescription') }}</p>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="input-label">{{ t('admin.accounts.openai.providerName') }}</label>
+              <input
+                v-model="openAICompatProviderName"
+                type="text"
+                class="input"
+                :placeholder="t('admin.accounts.openai.providerNamePlaceholder')"
+              />
+              <p class="input-hint">{{ t('admin.accounts.openai.providerNameHint') }}</p>
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.accounts.openai.customHeaders') }}</label>
+              <textarea
+                v-model="openAICompatHeaders"
+                rows="5"
+                class="input font-mono"
+                :placeholder="t('admin.accounts.openai.customHeadersPlaceholder')"
+              ></textarea>
+              <p class="input-hint">{{ t('admin.accounts.openai.customHeadersHint') }}</p>
+            </div>
+          </div>
+        </div>
+
         <!-- Gemini API Key tier selection -->
         <div v-if="form.platform === 'gemini'">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
@@ -2833,7 +2862,11 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
-import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
+import {
+  OPENAI_COMPAT_PROVIDER_NAME_EXTRA_KEY,
+  applyInterceptWarmup,
+  parseOpenAICompatHeaders
+} from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import {
@@ -2954,6 +2987,8 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock'>('oauth-based')
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const openAICompatProviderName = ref('')
+const openAICompatHeaders = ref('')
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
@@ -3660,6 +3695,8 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  openAICompatProviderName.value = ''
+  openAICompatHeaders.value = ''
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -3746,6 +3783,12 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   } else if (accountCategory.value === 'apikey') {
     extra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
+    const providerName = openAICompatProviderName.value.trim()
+    if (providerName) {
+      extra[OPENAI_COMPAT_PROVIDER_NAME_EXTRA_KEY] = providerName
+    } else {
+      delete extra[OPENAI_COMPAT_PROVIDER_NAME_EXTRA_KEY]
+    }
   }
   // 清理兼容旧键，统一改用分类型开关。
   delete extra.responses_websockets_v2_enabled
@@ -3960,6 +4003,16 @@ const handleSubmit = async () => {
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value
+  } else if (form.platform === 'openai') {
+    try {
+      const compatHeaders = parseOpenAICompatHeaders(openAICompatHeaders.value)
+      if (Object.keys(compatHeaders).length > 0) {
+        credentials.headers = compatHeaders
+      }
+    } catch {
+      appStore.showError(t('admin.accounts.openai.customHeadersInvalid'))
+      return
+    }
   }
 
   // Add model mapping if configured（OpenAI 开启自动透传时不应用）

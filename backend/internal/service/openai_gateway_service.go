@@ -2663,6 +2663,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
 	req.Header.Set("authorization", "Bearer "+token)
+	if account != nil && account.Type == AccountTypeAPIKey {
+		applyOpenAICompatHeaders(req.Header, account.GetOpenAICompatHeaders())
+	}
 
 	// OAuth 透传到 ChatGPT internal API 时补齐必要头。
 	if account.Type == AccountTypeOAuth {
@@ -3050,6 +3053,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// Set authentication header
 	req.Header.Set("authorization", "Bearer "+token)
+	if account.Type == AccountTypeAPIKey {
+		applyOpenAICompatHeaders(req.Header, account.GetOpenAICompatHeaders())
+	}
 
 	// Set headers specific to OAuth accounts (ChatGPT internal API)
 	if account.Type == AccountTypeOAuth {

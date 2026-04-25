@@ -1160,6 +1160,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		betaValue = openAIWSBetaV1Value
 	}
 	headers.Set("OpenAI-Beta", betaValue)
+	if account != nil && account.Type == AccountTypeAPIKey {
+		applyOpenAICompatHeaders(headers, account.GetOpenAICompatHeaders())
+	}
 
 	customUA := ""
 	if account != nil {
